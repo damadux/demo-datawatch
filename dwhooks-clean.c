@@ -7,6 +7,7 @@
 #include <pthread.h>
 #include <ucontext.h>
 #include <stdio.h>
+#include <stdint.h>
 
 #include <execinfo.h>
 
@@ -16,6 +17,7 @@
 typedef __uint64_t uint64_t;
 #define MAX_MALLOCS 0xFF0
 #define START_MALLOC 0x0000
+#define DW_TAG 0xC0000000000000
 #define OFFSET 0x10000000000000
 #define max(a,b) \
    ({ __typeof__ (a) _a = (a); \
@@ -32,6 +34,9 @@ static void *(*old_free_hook)(size_t, const void *);
 static size_t *sizes;
 static void* *original_address;
 static void* *return_address;
+
+static volatile uint16_t dw_TAG; // A constant tag to store in the top 16 bits of any new pointer
+static volatile uintptr_t dw_MASK;
 
 // keeps track of where we are in the array
 static volatile int count, all_count, free_count;
@@ -74,6 +79,11 @@ dw_init(void)
    old_free_hook = __free_hook;
    __malloc_hook = dw_malloc_hook;
    __free_hook = dw_free_hook;
+   
+   /* Tag */
+   dw_MASK = ~(65535ULL << 48);
+   dw_TAG = 12345;
+   
    count = 1;
    all_count = 0;
    free_count = 0;
@@ -95,30 +105,22 @@ dw_malloc_hook(size_t size, const void *caller)
 
    /* Restore all old hooks */
    __malloc_hook = old_malloc_hook;
-  __free_hook = old_free_hook;
+   __free_hook = old_free_hook;
 
    /* Call recursively */
    result = malloc(size);
    
-   result = (void *)((uint64_t)result % OFFSET);
+   printf("Orig address : %p\n", result);
+   result = (void *)(((uintptr_t)result & dw_MASK) | ((uintptr_t)dw_TAG << 48));
+   printf("Tagged address : %p\n", result);
+   
    unsigned long return_addr = (unsigned long)__builtin_return_address(0);
-   /* We check the return address in order not to mess up library calls. */
-   if(count>START_MALLOC && count<MAX_MALLOCS+START_MALLOC) 
-	 {
-       original_address[count-START_MALLOC] = result;
-       return_address[count-START_MALLOC] = (void *) return_addr;
-       result+= OFFSET*(count-START_MALLOC);
-       sizes[count-START_MALLOC] = max(size,24);
-    
-	 }
+   
    count++;
    /* Save underlying hooks */
    old_malloc_hook = __malloc_hook;
    old_free_hook = __free_hook;
 
-   /* printf() might call malloc(), so protect it too */
-   printf("malloc(%zu) called from %p returns %p for %lx \n",
-		   size, caller, result, return_addr);
 
    /* Restore our own hooks */
    __malloc_hook = dw_malloc_hook;
