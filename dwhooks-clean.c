@@ -16,17 +16,18 @@
 typedef __uint64_t uint64_t;
 #define MAX_MALLOCS 0xFF0
 #define START_MALLOC 0x0000
-//#define OFFSET 0x10000000000000
-#define OFFSET 0x00001000000000
+#define OFFSET 0x10000000000000
 #define max(a,b) \
    ({ __typeof__ (a) _a = (a); \
        __typeof__ (b) _b = (b); \
      _a > _b ? _a : _b; })
 /* Prototypes for our hooks */
 static void *dw_malloc_hook(size_t, const void *);
+static void dw_free_hook(void *, const void *);
 
 /* Variables to save original hooks */
 static void *(*old_malloc_hook)(size_t, const void *);
+static void *(*old_free_hook)(size_t, const void *);
 // where we store the allocated size
 static size_t *sizes;
 static void* *original_address;
@@ -40,10 +41,26 @@ static void sigsegv_handler(int sig, siginfo_t *si, void *ptr)
     ucontext_t *uc = (ucontext_t *)ptr;
 
     /* Get the address at the time the signal was raised */
-    
-    printf("SIGSEGV for Address: 0x%p",si->si_addr);
+    printf("SIGSEGV for Address: 0x%lx",(long) uc->uc_mcontext.gregs[REG_RAX]);
     printf(" for instruction:0x%lx\n",(long) uc->uc_mcontext.gregs[REG_RIP]);
-    exit(0);
+    
+    
+    // Untaint address
+    
+    long addr = (long) uc->uc_mcontext.gregs[REG_RAX];
+    
+    if((addr & (long) (dw_TAG << 48)) != 0) {
+        
+        long org_addr = (long) ((uc->uc_mcontext.gregs[REG_RAX] << 16 ) >> 16 );
+        /* Replace the address by the untainted. After the signal handler, 
+           the program will re-execute the instruction with the un-tainted address */
+        uc->uc_mcontext.gregs[REG_RAX] = org_addr;
+    }
+    else {
+    
+    exit(-1);
+    }
+    
 }
 
 
@@ -54,7 +71,9 @@ dw_init(void)
    original_address = (void**) malloc(sizeof(void *) * MAX_MALLOCS);
    return_address = (void**) malloc(sizeof(void *) * MAX_MALLOCS);
    old_malloc_hook = __malloc_hook;
+   old_free_hook = __free_hook;
    __malloc_hook = dw_malloc_hook;
+   __free_hook = dw_free_hook;
    count = 1;
    all_count = 0;
    free_count = 0;
@@ -76,6 +95,7 @@ dw_malloc_hook(size_t size, const void *caller)
 
    /* Restore all old hooks */
    __malloc_hook = old_malloc_hook;
+  __free_hook = old_free_hook;
 
    /* Call recursively */
    result = malloc(size);
@@ -94,6 +114,7 @@ dw_malloc_hook(size_t size, const void *caller)
    count++;
    /* Save underlying hooks */
    old_malloc_hook = __malloc_hook;
+   old_free_hook = __free_hook;
 
    /* printf() might call malloc(), so protect it too */
    printf("malloc(%zu) called from %p returns %p for %lx \n",
@@ -101,7 +122,31 @@ dw_malloc_hook(size_t size, const void *caller)
 
    /* Restore our own hooks */
    __malloc_hook = dw_malloc_hook;
+   __free_hook = dw_free_hook;
 
    return result;
+}
+
+static void
+dw_free_hook (void *ptr, const void *caller)
+{
+  /* Restore all old hooks */
+  __malloc_hook = old_malloc_hook;
+  __free_hook = old_free_hook;
+
+//  printf("Free: before untaint : %p \n", ptr);
+	ptr = (void *)(((intptr_t) ptr << 16) >> 16);
+//  printf("Free: after untaint : %p \n", ptr);
+ 
+  /* Call recursively */
+  free (ptr);
+
+  /* Save underlying hooks */
+  old_malloc_hook = __malloc_hook;
+  old_free_hook = __free_hook;
+
+  /* Restore our own hooks */
+  __malloc_hook = dw_malloc_hook;
+  __free_hook = dw_free_hook;
 }
 
