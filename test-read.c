@@ -18,7 +18,7 @@ void print_result_msg(int errnum, int nbytes)
 	switch (errnum)
 	{
 		case 0:
-			printf("Success. Number of bytes written is %d.\n", nbytes);
+			printf("Success. Number of bytes read is %d.\n", nbytes);
 			break;
 		case EINTR:
 			printf("The system call was interrupted.\n");
@@ -118,12 +118,12 @@ int main(int argc, char* argv[])
    * Pass an ordinary (untaintedi) pointer to the write system call
    * SUCCESS
    */
-  printf("\n 1. Write from the untainted pointer \n");
+  printf("\n 1. Read from the untainted pointer \n");
   printf("The value of ptr is : %p\n", ptr);
-  int nW = write(1, ptr, sizeof(int));
-  //int nR = read(fd,ptr, sizeof(int));
+  //int nW = write(1, ptr, sizeof(int));
+  int nR = read(fd,ptr, sizeof(int));
   errnum = errno;
-  print_result_msg(errnum, nW);
+  print_result_msg(errnum, nR);
 
   
   //if (((uintptr_t)ptr & X86_TBMASK) != 0) {
@@ -143,12 +143,12 @@ int main(int argc, char* argv[])
    * Pass a tainted pointer to the write system call
    * FAIL
    */
-  printf("\n 2. Write from the tainted pointer \n");
+  printf("\n 2. Read from the tainted pointer \n");
   printf("The value of ptr is : %p\n", ptr);
-  nW = write(1, ptr, sizeof(int));
-  //nR = read(fd,ptr, sizeof(int));
+  //nW = write(1, ptr, sizeof(int));
+  nR = read(fd,ptr, sizeof(int));
   errnum = errno;
-  print_result_msg(errnum, nW);
+  print_result_msg(errnum, nR);
 
 
   // Access will generate a SIGSEGV as the address is tainted.
