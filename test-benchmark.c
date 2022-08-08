@@ -5,8 +5,8 @@
 #include <inttypes.h>
 #include <sys/types.h>
 #include <errno.h>
-#include <fcntl.h>
-
+#include <sys/time.h>
+#include <sys/resource.h>
 #include "dwhooks.h"
 
 #define X86_TBMASK 0xFFFF000000000000
@@ -67,57 +67,72 @@ void print_pointer(uintptr_t addr, const char *msg) {
 	printf("\n");
 }
 
+
+/* Insert the tag into the 16 MSB of the pointer*/
+uintptr_t taint(uintptr_t p, uint16_t tag_data) 
+{
+  p = (uintptr_t)(((uintptr_t)p & DW_MASK) | ((uintptr_t)tag_data << 48));
+
+  return(p);
+}
+
+/* Remove the tag from the 16 MSB of the pointer*/
+uintptr_t untaint(uintptr_t p) 
+{
+	p = (void *)(((intptr_t)p << 16) >> 16);
+
+  return(p);
+}
+
 int main(int argc, char* argv[])
 {
   int errnum;
 
   if(argc < 2) {
-  	printf("%s %s\n",argv[0], "sleep_time");
+  	printf("%s %s\n",argv[0], "number_of_writes");
 	exit(1);
   }
 
+  if(argv[0] < 1){
+        printf("Number of writes must be greater than 0");
+  }
 
-  printf("PID:%ld -- sleep time %d\n",(long)getpid(), atoi(argv[1]));
-  sleep(atoi(argv[1]));
+  struct timeval st, et,st1,et1;
+
+  gettimeofday(&st,NULL);
+  struct rusage *usage;
+  for (int i=0;i<200;i++){
+
+  	int *ptr = malloc(245);
+	//int res = getrusage(RUSAGE_SELF, usage);
+	//printf("data: %ld, stack: %ld",usage->ru_idrss,usage->ru_isrss);
+	*ptr = 20;
+	*ptr = 45;
+	free(ptr);
+  }
+
+  gettimeofday(&et,NULL);
+  int elapsed1 = ((et.tv_sec - st.tv_sec) * 1000000) + (et.tv_usec - st.tv_usec);
+  printf("done1");
+
   dw_init();
-  printf("2");
-  int *ptr = malloc(sizeof(int));
-  // ptr pointer was tagged in the malloc hook.
 
-  print_pointer(ptr, "After Malloc:");
+  gettimeofday(&st1,NULL);
 
-  *ptr = 20;
+  for (int i=0;i<200;i++){
+
+  	int *ptr = malloc(245);
+	//int res = getrusage(RUSAGE_SELF, usage);
+	//printf("data: %lu, stack: %lu",usage->ru_idrss,usage->ru_isrss);
+	*ptr = 20;
+	*ptr = 45;
+	free(ptr);
+	
+  }
   
-  // File descriptor
-  int fd = open("/home/david/Documents/datawatch/textfile.txt",O_RDONLY);
-  /* 
-   * Pass an ordinary (untainted) pointer to the write system call
-   * SUCCESS
-   */
-  printf("\n 1. Write from the untainted pointer \n");
-  printf("The value of ptr is : %p\n", ptr);
-  int nW = write(1, ptr, sizeof(int));
-  //int nR = read(fd,ptr, sizeof(int));
-  errnum = errno;
-  print_result_msg(errnum, nW);
-
-  /* 
-   * Pass a tainted pointer to the write system call
-   * FAIL
-   */
-  printf("\n 2. Write from the tainted pointer \n");
-  printf("The value of ptr is : %p\n", ptr);
-  nW = write(1, ptr, sizeof(int));
-  //nR = read(fd,ptr, sizeof(int));
-  errnum = errno;
-  print_result_msg(errnum, nW);
-
-
-  // Access will generate a SIGSEGV as the address is tainted.
-  printf("\n 3. Access to the tainted pointer \n");
-  *ptr = 20;
-
-  free(ptr);
-
-  printf("PID:%ld\n",(long)getpid());
+  gettimeofday(&et1,NULL);
+  int elapsed2 = ((et1.tv_sec - st1.tv_sec) * 1000000) + (et1.tv_usec - st1.tv_usec);
+  printf("Time elapsed1: %d micro seconds \n", elapsed1);
+  printf("Time elapsed2: %d micro seconds \n", elapsed2);
+  
 }
