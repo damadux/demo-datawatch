@@ -58,10 +58,6 @@ int head = -1;
 int tail = -1;
 
 
-
-// keeps track of where we are in the array
-static volatile int count, all_count, free_count;
-
 static void sigsegv_handler(int sig, siginfo_t *si, void *ptr)
 {
     ucontext_t *uc = (ucontext_t *)ptr;
@@ -76,15 +72,15 @@ static void sigsegv_handler(int sig, siginfo_t *si, void *ptr)
     long addr = (long) uc->uc_mcontext.gregs[REG_RAX];
     long taint = (addr & 0xFFFF000000000000) / 0x1000000000000;
 
-    printf("%lu\n", taint);
+    printf("Taint: %lu\n", taint);
     if(taint != 0) {
 	// Bounds checking  
         long base_addr = malloc_metadata[taint-1].baseAddr;
         int obj_size = malloc_metadata[taint-1].length;
         long org_addr = (long) ((uc->uc_mcontext.gregs[REG_RAX] << 16 ) >> 16 );
-        printf("%lu\n", base_addr);
-        printf("%u\n", obj_size);
-        printf("%lu\n", org_addr);
+        printf("Base Addr: %lu\n", base_addr);
+        printf("Object size: %u\n", obj_size);
+        printf("Original Address: %lu\n", org_addr);
         if (base_addr <= org_addr && (base_addr + obj_size) >= org_addr){
             // Bounds check succeeded, nothing to do
 
@@ -110,7 +106,6 @@ extern void
 __attribute__((constructor)) dw_init()//int malloc_metadata_size)
 {
     int malloc_metadata_size = 356;
-    printf("5");
 
     if ((malloc_metadata_size < MALLOC_METADATA_MIN_SIZE) || (malloc_metadata_size > MALLOC_METADATA_MAX_SIZE)) {
         printf("Invalid malloc metadata table size");
@@ -189,9 +184,6 @@ dw_malloc_hook(size_t size, const void *caller)
         head = next_head;
     }
     
-    unsigned long return_addr = (unsigned long)__builtin_return_address(0);
-   
-    count++;
     /* Save underlying hooks */
     old_malloc_hook = __malloc_hook;
     old_free_hook = __free_hook;
@@ -214,7 +206,7 @@ dw_free_hook (void *ptr, const void *caller)
     __realloc_hook = old_realloc_hook;
 
     long addr = (long) ptr;
-    printf("%lu\n",addr);
+    printf("Address freed: %lu\n",addr);
 
     long taint = ((long)ptr & 0xFFFF000000000000) / 0x1000000000000;
     long index = taint-1;
