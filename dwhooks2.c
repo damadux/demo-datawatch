@@ -16,6 +16,10 @@
 #include <unistd.h>
 
 typedef __uint64_t uint64_t;
+#define MALLOC_METADATA_MIN_SIZE 256
+#define MALLOC_METADATA_MAX_SIZE 65000
+
+
 #define MAX_MALLOCS 0xFF0
 #define START_MALLOC 0x0000
 #define DW_TAG 0xC0000000000000
@@ -48,7 +52,7 @@ static struct object_id {
     size_t length;
 }object_id;
 
-static volatile struct object_id malloc_metadata[256];
+static volatile struct object_id * malloc_metadata;
 
 int head = -1;
 int tail = -1;
@@ -70,14 +74,13 @@ static void sigsegv_handler(int sig, siginfo_t *si, void *ptr)
     // Untaint address  
 
     long addr = (long) uc->uc_mcontext.gregs[REG_RAX];
-    
+    long taint = (addr & 0xFFFF000000000000) / 0x1000000000000;
 
-    if((addr & (long) (dw_TAG << 48)) != 0) {
-	// Bounds checking
-        long taint = (addr & 0xFFFF000000000000) / 0x1000000000000;
-	    printf("%lu\n", taint);
-        long base_addr = malloc_metadata[taint].baseAddr;
-        int obj_size = malloc_metadata[taint].length;
+    printf("%lu\n", taint);
+    if(taint != 0) {
+	// Bounds checking  
+        long base_addr = malloc_metadata[taint-1].baseAddr;
+        int obj_size = malloc_metadata[taint-1].length;
         long org_addr = (long) ((uc->uc_mcontext.gregs[REG_RAX] << 16 ) >> 16 );
         printf("%lu\n", base_addr);
         printf("%u\n", obj_size);
@@ -88,6 +91,7 @@ static void sigsegv_handler(int sig, siginfo_t *si, void *ptr)
             //Untaint address
             long org_addr = (long) ((uc->uc_mcontext.gregs[REG_RAX] << 16 ) >> 16 );
             uc->uc_mcontext.gregs[REG_RAX] = org_addr;
+            printf("Bounds check successful\n");
         }
         else {
             printf("Bounds check unsuccessful, exit for now\n");
@@ -102,20 +106,24 @@ static void sigsegv_handler(int sig, siginfo_t *si, void *ptr)
     
 }
 
-
-
 extern void
-dw_init(void)
+__attribute__((constructor)) dw_init()//int malloc_metadata_size)
 {
-    printf("1");
-    sizes = (size_t*) malloc(sizeof(size_t) * MAX_MALLOCS);
-    original_address = (void**) malloc(sizeof(void *) * MAX_MALLOCS);
-    return_address = (void**) malloc(sizeof(void *) * MAX_MALLOCS);
+    int malloc_metadata_size = 356;
+    printf("5");
 
+    if ((malloc_metadata_size < MALLOC_METADATA_MIN_SIZE) || (malloc_metadata_size > MALLOC_METADATA_MAX_SIZE)) {
+        printf("Invalid malloc metadata table size");
+        exit(-1);
+    }
+    
     //init metadata
-    for(int i=0;i<256;i++){
+
+    malloc_metadata = malloc(sizeof(object_id) * malloc_metadata_size);
+
+    for(int i=0;i<malloc_metadata_size;i++){
         malloc_metadata[i].status = 1;
-        if (i == 255) {
+        if (i == malloc_metadata_size - 1) {
             malloc_metadata[i].baseAddr = -1;
         }
         else {
@@ -125,8 +133,7 @@ dw_init(void)
         malloc_metadata[i].length = 0;
     }
     head = 1;
-    tail = 255;
-    //struct object_id malloc_metadata[256];
+    tail = malloc_metadata_size - 1;
 
     old_malloc_hook = __malloc_hook;
     old_free_hook = __free_hook;
@@ -162,10 +169,10 @@ dw_malloc_hook(size_t size, const void *caller)
         //TODO: enlarge list
         return -1;
     }
-    malloc_metadata[head].status = 0;
+    malloc_metadata[head-1].status = 0;
     int next_head = malloc_metadata[head-1].baseAddr;
-    malloc_metadata[head].baseAddr = (long) result;
-    malloc_metadata[head].length = size;
+    malloc_metadata[head-1].baseAddr = (long) result;
+    malloc_metadata[head-1].length = size;
 
     printf("Object_id: %u \n", head);
     printf("BaseAddr: %p \n", result);
@@ -247,6 +254,9 @@ dw_free_hook (void *ptr, const void *caller)
 static void*
 dw_realloc_hook (void *ptr, size_t size,const void *caller)
 {
+    void *result;
+    
+    printf("realloc");
     /* Restore all old hooks */
     __malloc_hook = old_malloc_hook;
     __free_hook = old_free_hook;
@@ -255,14 +265,18 @@ dw_realloc_hook (void *ptr, size_t size,const void *caller)
 
     long taint = ((long)ptr & 0xFFFF000000000000) / 0x1000000000000;
 
-    if (malloc_metadata[taint].status == 0){
-        long addr = malloc_metadata[taint].baseAddr;
+    if (malloc_metadata[taint - 1].status == 0){
+        long addr = malloc_metadata[taint - 1].baseAddr;
 
         /* Call recursively with untainted address*/
-        int result = realloc((void *)addr,size);
-        malloc_metadata[taint].baseAddr = result;
-        malloc_metadata[taint].length = size;
+        result = realloc((void *)addr,size);
+        malloc_metadata[taint - 1].baseAddr = result;
+        malloc_metadata[taint - 1].length = size;
         
+    }
+
+    else {
+        result = realloc(ptr,size);
     }
     
     
