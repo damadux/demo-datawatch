@@ -96,7 +96,7 @@ int main(int argc, char* argv[])
 
 	printf("PID:%ld -- sleep time %d\n",(long)getpid(), atoi(argv[1]));
   sleep(atoi(argv[1]));
-  dw_init();
+  dw_init(356);
 
   int *ptr = malloc(sizeof(int));
   // ptr pointer was tagged in the malloc hook.
