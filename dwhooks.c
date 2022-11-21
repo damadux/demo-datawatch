@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <capstone/capstone.h>
+#include <sys/ptrace.h>
 
 #include <execinfo.h>
 
@@ -104,7 +105,7 @@ static void sigsegv_handler(int sig, siginfo_t *si, void *ptr)
     
     detail = insn->detail;
     x86 = &detail->x86;
-    
+    int errno = cs_errno(handle);
     //uint8_t fr = (uint8_t) x86->op_count;
     for (size_t i=0; i < x86->op_count; i++){
         if (x86->operands[i].type == X86_OP_MEM) {
@@ -136,19 +137,19 @@ static void sigsegv_handler(int sig, siginfo_t *si, void *ptr)
         }
     
     }
-    
+    errno = cs_errno(handle);
     cs_free(insn, 1);
     
     // Untaint address 
     long addr = (long) uc->uc_mcontext.gregs[mod_reg];
     long taint = (addr & 0xFFFF000000000000) / 0x1000000000000;
-
+    long org_addr;
     //printf("Taint: %lu\n", taint);
     if(taint != 0) {
 	// Bounds checking  
         long base_addr = malloc_metadata[taint-1].baseAddr;
         int obj_size = malloc_metadata[taint-1].length;
-        long org_addr = (long) ((uc->uc_mcontext.gregs[mod_reg] << 16 ) >> 16 );
+        org_addr = (long) ((uc->uc_mcontext.gregs[mod_reg] << 16 ) >> 16 );
         //printf("Base Addr: %lu\n", base_addr);
         //printf("Object size: %u\n", obj_size);
         //printf("Original Address: %lu\n", org_addr);
@@ -159,6 +160,7 @@ static void sigsegv_handler(int sig, siginfo_t *si, void *ptr)
             long org_addr = (long) ((uc->uc_mcontext.gregs[mod_reg] << 16 ) >> 16 );
             uc->uc_mcontext.gregs[mod_reg] = org_addr;
             //printf("Bounds check successful\n");
+            
         }
         else {
             //printf("Bounds check unsuccessful, exit for now\n");
@@ -179,13 +181,14 @@ static void sigsegv_handler(int sig, siginfo_t *si, void *ptr)
     __free_hook = dw_free_hook;
     __realloc_hook = dw_realloc_hook;
     
+    uc->uc_mcontext.gregs[mod_reg] = org_addr;
 }
 
 extern void
 dw_init()
 {
     int malloc_metadata_size = 356;
-
+    
     if ((malloc_metadata_size < MALLOC_METADATA_MIN_SIZE) || (malloc_metadata_size > MALLOC_METADATA_MAX_SIZE)) {
         printf("Invalid malloc metadata table size");
         exit(-1);
@@ -222,6 +225,7 @@ dw_init()
     sigemptyset(&sa.sa_mask);
     sa.sa_sigaction = sigsegv_handler;
     sigaction(SIGSEGV, &sa, NULL);
+    sigaction(SIGBUS, &sa, NULL);
     
 }
 

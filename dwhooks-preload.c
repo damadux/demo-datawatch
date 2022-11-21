@@ -12,8 +12,6 @@
 #include <capstone/capstone.h>
 
 #include <execinfo.h>
-
-#include <execinfo.h>
 #include <unistd.h>
 
 typedef __uint64_t uint64_t;
@@ -49,9 +47,9 @@ static volatile uintptr_t dw_MASK;
 
 
 static struct object_id {
-    int status;
     long baseAddr;
     size_t length;
+    int status;
 }object_id;
 
 static volatile struct object_id * malloc_metadata;
@@ -104,7 +102,7 @@ static void sigsegv_handler(int sig, siginfo_t *si, void *ptr)
     
     detail = insn->detail;
     x86 = &detail->x86;
-    
+    int errno = cs_errno(handle);
     //uint8_t fr = (uint8_t) x86->op_count;
     for (size_t i=0; i < x86->op_count; i++){
         if (x86->operands[i].type == X86_OP_MEM) {
@@ -136,7 +134,7 @@ static void sigsegv_handler(int sig, siginfo_t *si, void *ptr)
         }
     
     }
-    
+    errno = cs_errno(handle);
     cs_free(insn, 1);
     
     // Untaint address 
@@ -187,6 +185,7 @@ __attribute__((constructor)) dw_init()
 {
     int malloc_metadata_size = 356;
 
+    
     if ((malloc_metadata_size < MALLOC_METADATA_MIN_SIZE) || (malloc_metadata_size > MALLOC_METADATA_MAX_SIZE)) {
         printf("Invalid malloc metadata table size");
         exit(-1);
@@ -224,6 +223,7 @@ __attribute__((constructor)) dw_init()
     sa.sa_sigaction = sigsegv_handler;
     sigaction(SIGSEGV, &sa, NULL);
     sigaction(SIGBUS, &sa, NULL);
+    
     
 }
 
